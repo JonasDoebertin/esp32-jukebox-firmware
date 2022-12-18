@@ -22,7 +22,6 @@ const uint8_t SD_DETECT_PIN = 34;
 const uint8_t I2S_DOUT_PIN = 26;
 const uint8_t I2S_BCLK_PIN = 5;
 const uint8_t I2S_LRC_PIN = 25;
-// #define I2S_DIN       GPIO_NUM_35
 
 const gpio_num_t AMP_POWER_PIN = GPIO_NUM_21;
 const gpio_num_t AMP_GAIN_PIN  = GPIO_NUM_23;
@@ -81,9 +80,11 @@ std::string asHexStr(uint8_t *buffer, uint32_t length);
 
 void setup() {
     Serial.begin(9600);
+
 #ifdef DEBUG
     delay(5000);
 #endif
+
     Serial.println("[Setup] Starting");
 
     // enable buttons
@@ -115,7 +116,7 @@ void setup() {
 
     Serial.println("[Setup] SD card initialized");
     
-    // // enable audio output
+    // enable audio output
 
     audio.setPinout(I2S_BCLK_PIN, I2S_LRC_PIN, I2S_DOUT_PIN);
     audio.setVolume(DEFAULT_VOLUME);
@@ -127,15 +128,15 @@ void setup() {
     nfc.begin();
     
     uint32_t versiondata = nfc.get_version();
-    if (! versiondata) {
+    if (!versiondata) {
         Serial.println("[Setup] Tag reader initialization failed");
-        while (1);
+        while (true);
     }
     
 #ifdef DEBUG
-    Serial.print("Found chip PN5");
-    Serial.println((versiondata>>24) & 0xFF, HEX); 
-    Serial.print("Firmware ver. ");
+    Serial.print("[Setup] Found chip PN5");
+    Serial.print((versiondata>>24) & 0xFF, HEX); 
+    Serial.print(" with firmware v");
     Serial.print((versiondata>>16) & 0xFF, DEC); 
     Serial.print('.');
     Serial.println((versiondata>>8) & 0xFF, DEC);
@@ -145,65 +146,7 @@ void setup() {
     Serial.println("[Setup] Tag reader initialized");
 }
 
-/*
-
-- Check if tag is scanned
-    - if different tag then before
-        - set state to playback
-        - set directory to tag id
-        - set current track to 0
-        - set track count to number of files in directory
-        - start playing current track
-
-- on starting playing current track
-    - play current track from directory
-
-- on track finishes
-    - if current track < track count
-        - increment current track
-        - start playing current track
-    - else
-        - set state to idle
-
-
-
-*/
-
 // Loop
-
-void readTagReader() {
-    uint8_t buffer[32];
-    uint8_t status;
-    
-    Serial.println("[NFC] Check for tag");
-    status = nfc.InListPassiveTarget(buffer);
-  
-    if (status == 1 && buffer[0] == 4) {
-        Serial.println("[NFC] Found tag");
-
-#ifdef DEBUG       
-        Serial.print("[NFC]   UUID length: ");
-        Serial.print(buffer[0], DEC);
-        Serial.println();
-        Serial.print("[NFC]   UUID: ");
-        nfc.puthex(buffer+1, buffer[0]);
-        Serial.println();
-#endif
-
-        currentTagId = asHexStr(buffer+1, buffer[0]);
-        startPlayback();
-    }
-}
-
-void loopTagReader() {
-    static unsigned long previousMillis = 0;
-	unsigned long currentMillis = millis();
-	
-	if (currentMillis - previousMillis >= NFC_SCAN_INTERVAL) {
-		previousMillis = currentMillis;
-        readTagReader();
-	}
-}
 
 void loop() {
 
@@ -228,6 +171,40 @@ void loop() {
     buttonVolumeUp.read();
     if (buttonVolumeUp.wasPressed()) {
         onVolumeUpButtonPressed();
+    }
+}
+
+void loopTagReader() {
+    static unsigned long previousMillis = 0;
+	unsigned long currentMillis = millis();
+	
+	if (currentMillis - previousMillis >= NFC_SCAN_INTERVAL) {
+		previousMillis = currentMillis;
+        readTagReader();
+	}
+}
+
+void readTagReader() {
+    uint8_t buffer[32];
+    uint8_t status;
+    
+    Serial.println("[NFC] Check for tag");
+    status = nfc.InListPassiveTarget(buffer);
+  
+    if (status == 1 && buffer[0] == 4) {
+        Serial.println("[NFC] Found tag");
+
+#ifdef DEBUG       
+        Serial.print("[NFC]   UUID length: ");
+        Serial.print(buffer[0], DEC);
+        Serial.println();
+        Serial.print("[NFC]   UUID: ");
+        nfc.puthex(buffer+1, buffer[0]);
+        Serial.println();
+#endif
+
+        currentTagId = asHexStr(buffer+1, buffer[0]);
+        startPlayback();
     }
 }
 
@@ -359,7 +336,7 @@ std::string getCurrentFilePath() {
 }
 
 void recoverI2CBus() {
-  Serial.println("Performing I2C bus recovery");
+  Serial.println("[I2C] Performing bus recovery");
 
   // For the upcoming operations, target for a 100kHz toggle frequency.
   // This is the maximum frequency for I2C running in standard-mode.
@@ -375,7 +352,7 @@ void recoverI2CBus() {
   // line. In that case, the I2C bus cannot be recovered.
   delayMicroseconds(half_period_usec);
   if (digitalRead(I2C_SCL_PIN) == LOW) {  // NOLINT
-    Serial.println("Recovery failed: SCL is held LOW on the I2C bus");
+    Serial.println("[I2C]   Recovery failed: SCL is held LOW on the I2C bus");
     return;
   }
 
@@ -412,7 +389,7 @@ void recoverI2CBus() {
       delay(25);
     }
     if (digitalRead(I2C_SCL_PIN) == LOW) {  // NOLINT
-      Serial.println("Recovery failed: SCL is held LOW during clock pulse cycle");
+      Serial.println("[I2C]   Recovery failed: SCL is held LOW during clock pulse cycle");
       return;
     }
   }
@@ -426,7 +403,7 @@ void recoverI2CBus() {
   // transaction, meaning that it should have freed up the SDA line, resulting
   // in SDA being pulled up.
   if (digitalRead(I2C_SDA_PIN) == LOW) {  // NOLINT
-    Serial.println("Recovery failed: SDA is held LOW after clock pulse cycle");
+    Serial.println("[I2C]   Recovery failed: SDA is held LOW after clock pulse cycle");
     return;
   }
 
@@ -455,7 +432,7 @@ void recoverI2CBus() {
   pinMode(I2C_SDA_PIN, INPUT);         // NOLINT
   pinMode(I2C_SDA_PIN, INPUT_PULLUP);  // NOLINT
 
-  Serial.println("Recovered");
+  Serial.println("[I2C]   Bus recovered");
 }
 
 std::string asHexStr(uint8_t *buffer, uint32_t length) {
