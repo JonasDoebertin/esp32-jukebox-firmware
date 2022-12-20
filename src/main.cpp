@@ -9,7 +9,7 @@
 
 // Debugging
 
-#define DEBUG
+// #define DEBUG
 
 // Pin configuration
 
@@ -38,7 +38,7 @@ const int I2C_SCL_PIN = 12;
 
 const int MIN_VOLUME = 1;
 const int MAX_VOLUME = 21;
-const int DEFAULT_VOLUME = 12;
+const int DEFAULT_VOLUME = 10;
 
 const unsigned long NFC_SCAN_INTERVAL = 2000;
 
@@ -59,6 +59,8 @@ uint currentTrack = 0;
 uint numberOfTracks = 0;
 std::string currentTagId = "";
 
+void loopTagReader();
+void readTagReader();
 void onPlayPauseButtonPressed();
 void onVolumeDownButtonPressed();
 void onVolumeUpButtonPressed();
@@ -106,8 +108,6 @@ void setup() {
 
     SPI.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN);
     delay(500);
-    //pinMode(SD_CS_PIN, OUTPUT);
-    //digitalWrite(SD_CS_PIN, HIGH);
 
     if (!SD.begin(SD_CS_PIN)) {
         Serial.println("[Setup] SD card initialization failed");
@@ -283,8 +283,8 @@ void playCurrentTrack() {
     Serial.println("[Audio] Playing track");
 
     std::string filePath = getCurrentFilePath();
-
-#ifdef DEBUG       
+    
+#ifdef DEBUG
     Serial.print("[Audio]   Playing track: ");
     Serial.print(filePath.c_str());
     Serial.println();
@@ -308,6 +308,14 @@ uint getCurrentFileCount() {
     uint count = 0;
     
     File dir = SD.open(getCurrentDirectoryPath().c_str());
+
+    if (!dir) {
+#ifdef DEBUG
+        Serial.println("[Audio]   Requested directory does not exist");
+#endif
+
+        return 0;
+    }
 
     while (true) {
         File entry = dir.openNextFile();
@@ -336,103 +344,103 @@ std::string getCurrentFilePath() {
 }
 
 void recoverI2CBus() {
-  Serial.println("[I2C] Performing bus recovery");
+    Serial.println("[I2C] Performing bus recovery");
 
-  // For the upcoming operations, target for a 100kHz toggle frequency.
-  // This is the maximum frequency for I2C running in standard-mode.
-  // The actual frequency will be lower, because of the additional
-  // function calls that are done, but that is no problem.
-  const auto half_period_usec = 1000000 / 100000 / 2;
+    // For the upcoming operations, target for a 100kHz toggle frequency.
+    // This is the maximum frequency for I2C running in standard-mode.
+    // The actual frequency will be lower, because of the additional
+    // function calls that are done, but that is no problem.
+    const auto half_period_usec = 1000000 / 100000 / 2;
 
-  // Activate input and pull up resistor for the SCL pin.
-  pinMode(I2C_SCL_PIN, INPUT_PULLUP);  // NOLINT
-
-  // This should make the signal on the line HIGH. If SCL is pulled low
-  // on the I2C bus however, then some device is interfering with the SCL
-  // line. In that case, the I2C bus cannot be recovered.
-  delayMicroseconds(half_period_usec);
-  if (digitalRead(I2C_SCL_PIN) == LOW) {  // NOLINT
-    Serial.println("[I2C]   Recovery failed: SCL is held LOW on the I2C bus");
-    return;
-  }
-
-  // From the specification:
-  // "If the data line (SDA) is stuck LOW, send nine clock pulses. The
-  //  device that held the bus LOW should release it sometime within
-  //  those nine clocks."
-  // We don't really have to detect if SDA is stuck low. We'll simply send
-  // nine clock pulses here, just in case SDA is stuck. Actual checks on
-  // the SDA line status will be done after the clock pulses.
-
-  // Make sure that switching to output mode will make SCL low, just in
-  // case other code has setup the pin for a HIGH signal.
-  digitalWrite(I2C_SCL_PIN, LOW);  // NOLINT
-
-  delayMicroseconds(half_period_usec);
-  for (auto i = 0; i < 9; i++) {
-    // Release pull up resistor and switch to output to make the signal LOW.
-    pinMode(I2C_SCL_PIN, INPUT);   // NOLINT
-    pinMode(I2C_SCL_PIN, OUTPUT);  // NOLINT
-    delayMicroseconds(half_period_usec);
-
-    // Release output and activate pull up resistor to make the signal HIGH.
-    pinMode(I2C_SCL_PIN, INPUT);         // NOLINT
+    // Activate input and pull up resistor for the SCL pin.
     pinMode(I2C_SCL_PIN, INPUT_PULLUP);  // NOLINT
+
+    // This should make the signal on the line HIGH. If SCL is pulled low
+    // on the I2C bus however, then some device is interfering with the SCL
+    // line. In that case, the I2C bus cannot be recovered.
     delayMicroseconds(half_period_usec);
-
-    // When SCL is kept LOW at this point, we might be looking at a device
-    // that applies clock stretching. Wait for the release of the SCL line,
-    // but not forever. There is no specification for the maximum allowed
-    // time. We'll stick to 500ms here.
-    auto wait = 20;
-    while (wait-- && digitalRead(I2C_SCL_PIN) == LOW) {  // NOLINT
-      delay(25);
-    }
     if (digitalRead(I2C_SCL_PIN) == LOW) {  // NOLINT
-      Serial.println("[I2C]   Recovery failed: SCL is held LOW during clock pulse cycle");
-      return;
+        Serial.println("[I2C]   Recovery failed: SCL is held LOW on the I2C bus");
+        return;
     }
-  }
 
-  // Activate input and pull resistor for the SDA pin, so we can verify
-  // that SDA is pulled HIGH in the following step.
-  pinMode(I2C_SDA_PIN, INPUT_PULLUP);  // NOLINT
-  digitalWrite(I2C_SDA_PIN, LOW);      // NOLINT
+    // From the specification:
+    // "If the data line (SDA) is stuck LOW, send nine clock pulses. The
+    //  device that held the bus LOW should release it sometime within
+    //  those nine clocks."
+    // We don't really have to detect if SDA is stuck low. We'll simply send
+    // nine clock pulses here, just in case SDA is stuck. Actual checks on
+    // the SDA line status will be done after the clock pulses.
 
-  // By now, any stuck device ought to have sent all remaining bits of its
-  // transaction, meaning that it should have freed up the SDA line, resulting
-  // in SDA being pulled up.
-  if (digitalRead(I2C_SDA_PIN) == LOW) {  // NOLINT
-    Serial.println("[I2C]   Recovery failed: SDA is held LOW after clock pulse cycle");
-    return;
-  }
+    // Make sure that switching to output mode will make SCL low, just in
+    // case other code has setup the pin for a HIGH signal.
+    digitalWrite(I2C_SCL_PIN, LOW);  // NOLINT
 
-  // From the specification:
-  // "I2C-bus compatible devices must reset their bus logic on receipt of
-  //  a START or repeated START condition such that they all anticipate
-  //  the sending of a target address, even if these START conditions are
-  //  not positioned according to the proper format."
-  // While the 9 clock pulses from above might have drained all bits of a
-  // single byte within a transaction, a device might have more bytes to
-  // transmit. So here we'll generate a START condition to snap the device
-  // out of this state.
-  // SCL and SDA are already high at this point, so we can generate a START
-  // condition by making the SDA signal LOW.
-  delayMicroseconds(half_period_usec);
-  pinMode(I2C_SDA_PIN, INPUT);   // NOLINT
-  pinMode(I2C_SDA_PIN, OUTPUT);  // NOLINT
+    delayMicroseconds(half_period_usec);
+    for (auto i = 0; i < 9; i++) {
+        // Release pull up resistor and switch to output to make the signal LOW.
+        pinMode(I2C_SCL_PIN, INPUT);   // NOLINT
+        pinMode(I2C_SCL_PIN, OUTPUT);  // NOLINT
+        delayMicroseconds(half_period_usec);
 
-  // From the specification:
-  // "A START condition immediately followed by a STOP condition (void
-  //  message) is an illegal format. Many devices however are designed to
-  //  operate properly under this condition."
-  // Finally, we'll bring the I2C bus into a starting state by generating
-  // a STOP condition.
-  delayMicroseconds(half_period_usec);
-  pinMode(I2C_SDA_PIN, INPUT);         // NOLINT
-  pinMode(I2C_SDA_PIN, INPUT_PULLUP);  // NOLINT
+        // Release output and activate pull up resistor to make the signal HIGH.
+        pinMode(I2C_SCL_PIN, INPUT);         // NOLINT
+        pinMode(I2C_SCL_PIN, INPUT_PULLUP);  // NOLINT
+        delayMicroseconds(half_period_usec);
 
-  Serial.println("[I2C]   Bus recovered");
+        // When SCL is kept LOW at this point, we might be looking at a device
+        // that applies clock stretching. Wait for the release of the SCL line,
+        // but not forever. There is no specification for the maximum allowed
+        // time. We'll stick to 500ms here.
+        auto wait = 20;
+        while (wait-- && digitalRead(I2C_SCL_PIN) == LOW) {  // NOLINT
+        delay(25);
+        }
+        if (digitalRead(I2C_SCL_PIN) == LOW) {  // NOLINT
+        Serial.println("[I2C]   Recovery failed: SCL is held LOW during clock pulse cycle");
+        return;
+        }
+    }
+
+    // Activate input and pull resistor for the SDA pin, so we can verify
+    // that SDA is pulled HIGH in the following step.
+    pinMode(I2C_SDA_PIN, INPUT_PULLUP);  // NOLINT
+    digitalWrite(I2C_SDA_PIN, LOW);      // NOLINT
+
+    // By now, any stuck device ought to have sent all remaining bits of its
+    // transaction, meaning that it should have freed up the SDA line, resulting
+    // in SDA being pulled up.
+    if (digitalRead(I2C_SDA_PIN) == LOW) {  // NOLINT
+        Serial.println("[I2C]   Recovery failed: SDA is held LOW after clock pulse cycle");
+        return;
+    }
+
+    // From the specification:
+    // "I2C-bus compatible devices must reset their bus logic on receipt of
+    //  a START or repeated START condition such that they all anticipate
+    //  the sending of a target address, even if these START conditions are
+    //  not positioned according to the proper format."
+    // While the 9 clock pulses from above might have drained all bits of a
+    // single byte within a transaction, a device might have more bytes to
+    // transmit. So here we'll generate a START condition to snap the device
+    // out of this state.
+    // SCL and SDA are already high at this point, so we can generate a START
+    // condition by making the SDA signal LOW.
+    delayMicroseconds(half_period_usec);
+    pinMode(I2C_SDA_PIN, INPUT);   // NOLINT
+    pinMode(I2C_SDA_PIN, OUTPUT);  // NOLINT
+
+    // From the specification:
+    // "A START condition immediately followed by a STOP condition (void
+    //  message) is an illegal format. Many devices however are designed to
+    //  operate properly under this condition."
+    // Finally, we'll bring the I2C bus into a starting state by generating
+    // a STOP condition.
+    delayMicroseconds(half_period_usec);
+    pinMode(I2C_SDA_PIN, INPUT);         // NOLINT
+    pinMode(I2C_SDA_PIN, INPUT_PULLUP);  // NOLINT
+
+    Serial.println("[I2C]   Bus recovered");
 }
 
 std::string asHexStr(uint8_t *buffer, uint32_t length) {
